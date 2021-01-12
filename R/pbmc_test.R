@@ -9,15 +9,15 @@ library(readxl)
 library(mclust)
 library(magrittr)
 library(dplyr)
-#整体数据读取处理
-metadata <- readRDS("E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/pbmc_metadata.rds")
-pbmc<- readRDS("E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/pbmc_expression_matrix.rds")
+#get meta information
+metadata <- readRDS("pbmc_metadata.rds")
+# get data
+pbmc<- readRDS("pbmc_expression_matrix.rds")
 pbmc <- CreateSeuratObject(counts = pbmc, meta.data = metadata)
 
-#可视化整体数据
 pbmc <- NormalizeData(pbmc, verbose = FALSE)
 pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 6000, verbose = FALSE)
-# 跑标准的流程（可视化和clustering）
+# clustering
 pbmc <- ScaleData(pbmc, verbose = FALSE)
 pbmc <- RunPCA(pbmc, npcs = 20, verbose = FALSE)
 pbmc <- RunUMAP(pbmc, reduction = "pca", dims = 1:20)
@@ -27,12 +27,7 @@ plot_grid(p1, p2)
 genename<-VariableFeatures(pbmc)
 
 #harmony
-cell_embedding<-pbmc@reductions[["pca"]]@cell.embeddings
-write.csv(cell_embedding,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/cell_embedding.csv")
-write.csv(metadata,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/meta_harmony.csv")
-
-#harmony处理
-matrix<-read.csv("E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/integrated_data.csv")
+matrix<-read.csv("./pbmc/integrated_data.csv")
 #matrix<-t(matrix)
 #meta_new<-rbind(data1,data2,data3)
 colnames(matrix)<-row.names(metadata)
@@ -42,7 +37,6 @@ row.names(matrix)<-c("pc1","pc2","pc3","pc4","pc5","pc6","pc7","pc8","pc9","pc10
 
 integrated_data <- CreateSeuratObject(counts = matrix,meta.data = metadata)
 
-#可视化harmony整合后的数据
 pca<-pbmc@reductions$pca
 pca@cell.embeddings<-t(matrix)
 pca@feature.loadings<-matrix(0)
@@ -62,10 +56,9 @@ batch.estimate <- kBET(t(integrated_data@assays$RNA@data)[subset_id,], integrate
 lisi_res <- lisi::compute_lisi(integrated_data@reductions$pca@cell.embeddings, integrated_data@meta.data,c('tech', 'celltype'))
 
 
-#seurat数据整合
+#seurat
 pancreas.list <- SplitObject(pbmc, split.by = "tech")
 all.genes <- rownames(pbmc)
-memory.limit(9999999999999)
 for (i in 1:length(pancreas.list)) {
   pancreas.list[[i]] <- NormalizeData(pancreas.list[[i]], verbose = FALSE)
   pancreas.list[[i]] <- FindVariableFeatures(pancreas.list[[i]], selection.method = "vst", 
@@ -74,28 +67,14 @@ for (i in 1:length(pancreas.list)) {
   pancreas.list[[i]] <- RunPCA(pancreas.list[[i]], features = VariableFeatures(object = pancreas.list[[i]]))
   #pancreas.list[[i]] <- FindNeighbors(pancreas.list[[i]], dims = 1:10)
 }
-#分批次聚类
-pancreas.list[[1]] <- FindClusters(pancreas.list[[1]], resolution = 0.14)
-#找maker gene
-markers_1 <- FindAllMarkers(object = pancreas.list[[1]], only.pos = TRUE, 
-                              min.pct = 0.25, 
-                              thresh.use = 0.25)
-
-top30_1 <- markers_1%>%group_by(cluster) %>% top_n(n = 30, wt = avg_logFC)
-write.csv(top30_1,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/top3_1.csv")
-pancreas.list[[2]] <- FindClusters(pancreas.list[[2]], resolution = 0.16)
-markers_2 <- FindAllMarkers(object = pancreas.list[[2]], only.pos = TRUE, 
-                            min.pct = 0.25, 
-                            thresh.use = 0.25)
-top30_2 <- markers_2 %>%group_by(cluster) %>% top_n(n = 30, wt = avg_logFC)
-write.csv(top30_2,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/top30_2.csv")
+#clustering
 
 pancreas.list[[1]] <- RunUMAP(pancreas.list[[1]], reduction = "pca", dims = 1:30)
 DimPlot(pancreas.list[[1]], reduction = "umap")
 pancreas.list[[2]] <- RunUMAP(pancreas.list[[2]], reduction = "pca", dims = 1:30)
 DimPlot(pancreas.list[[2]], reduction = "umap")
 
-#seurat找anchor整合
+#seurat find anchor
 pancreas.anchors <- FindIntegrationAnchors(object.list = pancreas.list, dims = 1:30,k.anchor = 10,anchor.features=genename)
 pancreas.integrated <- IntegrateData(anchorset = pancreas.anchors, dims = 1:30,features.to.integrate	= genename)
 #pancreas.list <- IntegrateData(anchorset = pancreas.anchors, dims = 1:30,features.to.integrate	= genename)
@@ -119,7 +98,7 @@ p6 <- DimPlot(pancreas.integrated, reduction = "umap", group.by = "celltype", la
               repel = TRUE,pt.size = 1,label.size = 8) 
 p1 + p2
 
-#计算ARI
+# impute ARI
 adjustedRandIndex(pancreas.integrated@meta.data$celltype,pancreas.integrated@meta.data$seurat_clusters)
 
 subset_size <- 0.25 #subsample to 10% of the data
@@ -128,11 +107,6 @@ batch.estimate <- kBET(t(pancreas.integrated@assays$RNA@data)[subset_id,], pancr
 
 lisi_res <- lisi::compute_lisi(pancreas.integrated@reductions$pca@cell.embeddings, pancreas.integrated@meta.data,c('tech', 'celltype'))
 
-
-
-#自己算法
-
-#分批次聚类marker统计
 genename<-VariableFeatures(pbmc)
 batch1_0<-SubsetData(pancreas.list[[1]],cell=pancreas.list[[1]]@meta.data$celltype =="B cell")
 batch1_1<-SubsetData(pancreas.list[[1]],cell=pancreas.list[[1]]@meta.data$celltype =="CD4 T cell")
@@ -151,7 +125,7 @@ batch2_5<-SubsetData(pancreas.list[[2]],cell=pancreas.list[[2]]@meta.data$cellty
 batch2_6<-SubsetData(pancreas.list[[2]],cell=pancreas.list[[2]]@meta.data$celltype =="Plasmacytoid dendritic cell")
 
 pancreas.list<-0
-#整合
+#integrated
 #CD4
 CD4<-merge(batch1_1,batch2_1)
 batch1_1<-0
@@ -367,7 +341,7 @@ meta_new<-rbind(CD4_integrated@meta.data,B_integrated@meta.data,Mega_integrated@
                 Monocyte_fcgr3a_integrated@meta.data,NK_integrated@meta.data,plas_integrated@meta.data)
 
 pancreas.list<-0
-#求差值
+#impute vectors
 cellname<-c(colnames(B_integrated),colnames(CD4_integrated),colnames(CD8_integrated),colnames(Monocyte_CD14_integrated),colnames(Monocyte_fcgr3a_integrated),colnames(NK_integrated),colnames(plas_integrated))
 cellname_old<-setdiff(colnames(pbmc),cellname)
 data_old<-SubsetData(pancreas.integrated,cell=cellname_old)
@@ -392,36 +366,17 @@ plas_integrated<-as.matrix(plas_integrated@assays$integrated@data)
 plas_integrated<-plas_integrated[order(row.names(plas_integrated),decreasing=F),]
 
 data_new<-cbind(CD4_integrated,CD8_integrated,B_integrated,Monocyte_CD14_integrated,Monocyte_fcgr3a_integrated,NK_integrated,plas_integrated)
-data_new<-data_new[order(row.names(data_new),decreasing=F),]
-data_old<-data_old[order(row.names(data_old),decreasing=F),]
-data_new<-cbind(data_new,data_old)
-write.csv(data_new,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/整合后结果数据.csv")
-
-meta_new<-rbind(meta_new,meta_old)
-meta_new<-meta_new[1:15476,]
-write.csv(meta_new,"E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/整合后meta.csv")
 
 #pancreas.anchors<-0
 pancreas.list<-0
-data_new<-read.csv("E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/整合后结果数据.csv",header=TRUE)
-meta_new<-read.csv("E:/bioinformatics--group/RNA_ATAC数据/pbmc数据集/pbmc/整合后meta.csv")
 data_new <- CreateSeuratObject(counts = data_new,meta.data = meta_new)
-# 跑标准的流程（可视化和clustering）
-#data_new <- NormalizeData(data_new, normalization.method = "LogNormalize", scale.factor = 10000)
-
-
 all.genes <- rownames(data_new)
-
 data_new <- FindVariableFeatures(data_new, selection.method = "vst", nfeatures = 6000, verbose = FALSE)
-
 data_new <- ScaleData(data_new, verbose = FALSE)
-data_new@meta.data$RNA_snn_res.0.14<-0
-data_new@meta.data$RNA_snn_res.0.16<-0
-data_new@meta.data$seurat_clusters<-0
 data_new <- RunPCA(data_new,npcs = 50, verbose = FALSE,features = VariableFeatures(object = data_new))
 data_new <- FindNeighbors(data_new, dims = 1:10)
 
-聚类
+# clustering
 data_new<- FindClusters(data_new, resolution = 0.055)
 data_new <- RunUMAP(data_new, reduction = "pca", dims = 1:30)
 DimPlot(data_new, reduction = "umap",label = TRUE)
